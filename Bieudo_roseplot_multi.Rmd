@@ -1,0 +1,390 @@
+---
+title: "Vẽ biểu đồ hoa gió cho thời điêm xuất hiện dỉnh lũ và dòng chảy nhỏ nhất; so sánh các thời đoạn"
+author: "Nguyen Trung Nam"
+date: "April 23, 2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Mẫu phân tích đặc điểm khí tượng <br/>
+
+
+# Load library & User-define Function
+```{r message=FALSE, warning=FALSE}
+library(ggmap)
+library(ggalt)
+library(DBI)
+library(here)
+library(raster)
+library(maptools)
+library(sf)       # sometimes need to update dpplyr package
+library(tidyverse)
+library(ggspatial)
+library(RColorBrewer)
+library(rasterVis)
+library(ggspatial)
+library(ggrepel)
+library(gridExtra)
+library(grid)
+library(trend)
+library(broom)
+library(gridExtra)
+library(grid)
+library(readxl)
+library(zoo)
+library(GGally)
+library(scales)
+ggmap::register_google(key = "AIzaSyCoycOLl14YkOqc4PtY57cTpU8C_cQAaK8")
+source("d:/Repository/R_Postgres/R/F-Raster2df_4_ggplot.R")
+source("d:/Repository/R_Postgres/R/Library_EV.R")
+source("d:/Repository/R_Postgres/R/F-summary.R")
+``` 
+
+# Common information
+```{r common information}
+# Phần chỉnh thông số chung - size & font-----
+legsize     = 20  # Kích thước chữ legend
+axisize     = 20  # Kích thước chữ của trục
+axtilesize  = 20  # Kích thước chữ chú dẫn trục axis
+tilesize    = 23  # Kích thước tên biểu đồ
+legspace    = 1 # Khoảng cách các thành phần trong legend
+fcetsize    = 16  # Kích thước chữ trong facet title
+mary        = 2  # Khoảng cách axis title và axis trục y
+marx        = 2  # Khoảng cách axis title và axis trục x
+antext      =  5  # Kích thước size text của annotation
+ansym       =  6  # Kích thước segment của legend
+# Phần tên biểu đồ                       ----
+tilel = data.frame(bien = c('plt.1_1','plt.1_4','plt.1_2','plt.1_3','plt.2','plt.3_1','plt.3_2',
+                            'plt.4_1','plt.4_2','plt.5'),
+                   
+                   bviet = c('T\u1ED5ng l\u01B0\u1EE3ng m\u01B0a n\u0103m trung b\u00ECnh v\u00F9ng \u0110BSCL t\u1EEB 1985 - 2018',
+                             'T\u1ED5ng l\u01B0\u1EE3ng m\u01B0a n\u0103m trung b\u00ECnh theo v\u00F9ng',
+                             'L\u01B0\u1EE3ng m\u01B0a trung b\u00ECnh th\u00E1ng trong n\u0103m',
+                             'T\u1ED5ng l\u01B0\u1EE3ng m\u01B0a theo m\u00F9a',
+                             'L\u01B0\u1EE3ng m\u01B0a th\u00E1ng t\u1EA1i m\u1ED9t s\u1ED1 tr\u1EA1m \u0111\u1EA1i di\u1EC7n ',
+                             'Xu th\u1EBF m\u01B0a n\u0103m v\u00E0 m\u01B0a m\u00F9a trung b\u00ECnh v\u00F9ng \u0110BSCL t\u1EEB 1985 - 2018',
+                             'Xu th\u1EBF m\u01B0a th\u00E1ng trung b\u00ECnh v\u00F9ng \u0110BSCL t\u1EEB 1985 - 2018',
+                             'Xu th\u1EBF m\u01B0a n\u0103m v\u00E0 m\u01B0a m\u00F9a t\u1EA1i' ,
+                             'Xu th\u1EBF m\u01B0a th\u00E1ng t\u1EA1i',
+                             'Xu th\u1EBF m\u01B0a n\u0103m t\u1EA1i c\u00E1c tr\u1EA1m v\u00F9ng \u0110BSCL 1985-2018'),
+                   
+                   beng = c('The Mean of Annual rainfall in the MeKong Delta from 1977 - 2018',
+                            'Annual rainfall in the MeKong Delta in Zones',
+                            'The monthly rainfall in ',
+                            'The seasonal rainfall total',
+                            'Montly rainfall',
+                            'The trend of mean annual precipitation in the MeKong Delta ',
+                            'The trend of mean month precipitation in the MeKong Delta ',
+                            'The trend of mean annual precipitation at ',
+                            'The trend of mean month precipitation at ',
+                            'The trend of annual rainfall in the Mekong Delta'
+                          ))
+
+# Phần chỉnh chuyển đổi ngôn ngữ E <=> V -----
+varl$bname     = varl$bviet
+tilel$bname    = tilel$bviet
+stalist$bname  = stalist$bviet
+admin$bname    = admin$bviet
+parm$bname     = parm$bviet
+```
+
+# Import the individual files, such as csv; excel
+```{r Import individual files, message=FALSE, warning=FALSE}
+# danh sách trạm lựa chọn để tính trung bình năm, tháng và vẽ biểu đồ cho trạm ĐẠI DIỆN => báo cáo
+dt.sta = read_csv('d:/Repository/R_Postgres/library/ds_tram_kt_4_report.csv')
+dt.sta = na.omit(dt.sta)
+
+# danh sách 31 trạm mưa lựa chọn phân tích tính mưa toàn ĐBSCL
+dt.mua = read_csv('d:/Repository/R_Postgres/library/dstrammua_sudungtt.csv')
+dt.mua = na.omit(dt.mua)
+```
+
+# Lấy dữ liệu từ Database => format yêu cầu cho từng biểu đồ
+```{r DB to the required dataframe, message=FALSE, warning=FALSE, paged.print=FALSE}
+con = floadDB('daily_DB')
+dbListTables(con)
+df = dbGetQuery(con,"select * from tmp_roseplot")
+df = df %>% filter(parameter_id == 'h') #=> Thay tham so ơ đây
+
+# Bảng plt1 => Tính bảng giá trị lớn nhất, nhỏ nhất và thời điểm xuất hiên để vẽ hoa plot
+dt.plt1 = df
+
+# Bảng plt2 => Tính bảng giá trị lớn nhất, nhỏ nhất và thời điểm xuất hiên để vẽ hoa plot
+dt.plt2 = df
+
+# Bảng giai đoạn: plt3
+dt.plt3 = fphandoan(df)
+
+# Bảng gán nhóm vẽ so sánh nhóm trạm với nhau: plt4
+## tạo nhóm trạm => gán cho file excel ở ngoài
+dfn = read.csv('d:/Repository/R_Postgres/library/nhom_tram.csv')
+dfn_l = dfn %>% group_by(nhom_id) %>% nest()
+fcobined_nhom = function(df){
+  tmp = df
+  sta = as.character(tmp$station_id)
+  tmp$nhom_id = paste(sta, collapse = "_")
+  return(tmp)
+}
+dfn = map(dfn_l$data,fcobined_nhom)%>% bind_rows()
+## gán nhóm vào dt.plt4
+dt.plt4 = left_join(df,dfn, by = 'station_id') %>% na.omit()
+
+# Bảng gán nhóm vẽ so sánh nhóm trạm với nhau và facet_grid theo phan doan: plt5
+dt.plt5 = fphandoan(dt.plt4)
+```
+
+# plt1: Vẽ hoa gió đơn biến chỉ vẽ max hoặc min
+```{r}
+path = paste0(here::here(),"/figs/roseplot/plt1/",fsub_n(varl,'lagu'))
+# function
+froseplot = function(df = 'dt.plt'){
+  dt.plt = df
+  # variables
+  plt_titl  = paste(fsub_n(parm,dt.plt$parameter_id[1]),
+                    tolower(fsub_n(varl,dt.plt$type_id[1])),
+                    '& th\u1EDDi \u0111i\u1EC3m xu\u1EA5t hi\u1EC7n',
+                    'tại',fsub_n(stalist,dt.plt$station_id[1]),'t\u1EEB',
+                    min(dt.plt$y),'-',max(dt.plt$y)) 
+  donvi        = as.character(dt.plt$dv[1])
+  fname =file.path(paste0(path,'/',dt.plt$parameter_id[1]),
+                   paste(dt.plt$station_id[1],'-',dt.plt$parameter_id[1],'-',
+                         dt.plt$type_id[1],'-',
+                         min(dt.plt$y),'_',max(dt.plt$y),".png",sep=""))
+  # chart body
+  plt <- plot.flowrose(dt.plt,spd = 'spd',dir = 'dir',dv = donvi,tile = plt_titl,
+                        palette = "YlGnBu",pre = '')+ theme_bw()
+  plt <- plt + theme(legend.position = 'bottom',legend.spacing.x = unit(0.2, 'cm'),legend.key.size = unit(1.0, 'cm'),
+                       legend.text = element_text(size = legsize), legend.title = element_text(size = legsize))
+  plt <- plt + theme(plot.title = element_text(size = tilesize,hjust = 0.0),axis.title = element_text(size = axtilesize),
+                       axis.text = element_text(size = axisize),text = element_text(size = 20 ))
+  ## printing plt
+  ggsave(plt,filename = fname,width = 18, height = 16,dpi = 400, scale = 0.7)
+  return()
+}
+# Tạo list
+dt.plt1 = dt.plt1 %>% mutate(lst = paste(station_id,parameter_id,type_id))
+tmp_l = dt.plt1 %>% group_by(lst) %>% nest()
+# map function
+map(tmp_l$data,froseplot)
+```
+
+
+
+# plt2: Vẽ hoa gió facet_max-min
+```{r}
+path = paste0(here::here(),"/figs/roseplot/plt2/",fsub_n(varl,'lagu'))
+# function
+froseplot = function(df = 'dt.plt'){
+  dt.plt = df
+  dt.plt = left_join(dt.plt,varl, by = c('type_id' = 'bien'))
+  # variables
+  plt_titl  = paste(fsub_n(parm,dt.plt$parameter_id[1]),
+                    '& th\u1EDDi \u0111i\u1EC3m xu\u1EA5t hi\u1EC7n',
+                    'tại',fsub_n(stalist,dt.plt$station_id[1]),
+                    min(dt.plt$y),'-',max(dt.plt$y)) 
+  donvi        = as.character(dt.plt$dv[1])
+  fname =file.path(paste0(path,'/',dt.plt$parameter_id[1]),
+                   paste(dt.plt$station_id[1],'-',dt.plt$parameter_id[1],'-',
+                         min(dt.plt$y),'_',max(dt.plt$y),'_maxmin',".png",sep=""))
+  # chart body
+  plt <- plot.flowrose(dt.plt,spd = 'spd',dir = 'dir',dv = donvi,tile = plt_titl,
+                        palette = "YlGnBu",pre = '')+ theme_bw() + facet_wrap(~bname)
+  plt <- plt + theme(legend.position = 'bottom',legend.spacing.x = unit(0.2, 'cm'),legend.key.size = unit(1.0, 'cm'),
+                       legend.text = element_text(size = legsize), legend.title = element_text(size = legsize))
+  plt <- plt + theme(plot.title = element_text(size = tilesize,hjust = 0.0),axis.title = element_text(size = axtilesize),
+                       axis.text = element_text(size = axisize),text = element_text(size = 20),strip.text = element_text(size = 20))
+  ## printing plt
+  ggsave(plt,filename = fname,width = 25, height = 16,dpi = 400, scale = 0.7)
+  return()
+}
+# Tạo list
+dt.plt2 = dt.plt2 %>% mutate(lst = paste(station_id,parameter_id))
+tmp_l = dt.plt2 %>% group_by(lst) %>% nest()
+# map function
+map(tmp_l$data,froseplot)
+```
+
+
+
+
+
+
+
+
+
+
+# plt3: Vẽ hoa gió đơn biến chỉ vẽ max hoặc min phân giai đoạn so sánh
+```{r}
+path = paste0(here::here(),"/figs/roseplot/plt3/",fsub_n(varl,'lagu'))
+# function
+froseplot = function(df = 'dt.plt'){
+  dt.plt = df
+  dt.plt$bname <- factor(dt.plt$pd, levels = c('pre99','2000-2010','post10'),
+                         labels = c(as.character(fsub_n(varl,'pre99')),
+                                    as.character(fsub_n(varl,'2000-2010')),as.character(fsub_n(varl,'post10'))))
+  # variables
+  plt_titl  = paste(fsub_n(parm,dt.plt$parameter_id[1]),
+                    tolower(fsub_n(varl,dt.plt$type_id[1])),
+                    '& th\u1EDDi \u0111i\u1EC3m xu\u1EA5t hi\u1EC7n',
+                    'tại',fsub_n(stalist,dt.plt$station_id[1]),
+                    min(dt.plt$y),'-',max(dt.plt$y)) 
+  donvi        = as.character(dt.plt$dv[1])
+  fname =file.path(paste0(path,'/',dt.plt$parameter_id[1]),
+                   paste(dt.plt$station_id[1],'-',dt.plt$parameter_id[1],'-',
+                         dt.plt$type_id[1],'-',
+                         min(dt.plt$y),'_',max(dt.plt$y),'_phandoan',".png",sep=""))
+  # chart body
+  plt <- plot.flowrose(dt.plt,spd = 'spd',dir = 'dir',dv = donvi,tile = plt_titl,
+                        palette = "YlGnBu",pre = '')+ theme_bw() + facet_wrap(~bname)
+  plt <- plt + theme(legend.position = 'bottom',legend.spacing.x = unit(0.2, 'cm'),legend.key.size = unit(1.0, 'cm'),
+                       legend.text = element_text(size = legsize), legend.title = element_text(size = legsize))
+  plt <- plt + theme(plot.title = element_text(size = tilesize,hjust = 0.0),axis.title = element_text(size = axtilesize),
+                       axis.text = element_text(size = axisize),text = element_text(size = 20 ),strip.text = element_text(size = 20 ))
+  ## printing plt
+  ggsave(plt,filename = fname,width = 35, height = 15,dpi = 400, scale = 0.7)
+  return()
+}
+# Tạo list
+dt.plt3 = dt.plt3 %>% mutate(lst = paste(station_id,parameter_id,type_id))
+tmp_l = dt.plt3 %>% group_by(lst) %>% nest()
+# map function
+map(tmp_l$data,froseplot)
+```
+
+
+
+# plt4: Vẽ hoa gió đơn biến chỉ vẽ max hoặc min so sánh giữa các trạm
+```{r}
+path = paste0(here::here(),"/figs/roseplot/plt4/",fsub_n(varl,'lagu'))
+# function
+froseplot = function(df = 'dt.plt'){
+  dt.plt = df
+  dt.plt = left_join(dt.plt,stalist, by = c('station_id' = 'bien'))
+  # variables
+  plt_titl  = paste(fsub_n(parm,dt.plt$parameter_id[1]),
+                    tolower(fsub_n(varl,dt.plt$type_id[1])),
+                    '& th\u1EDDi \u0111i\u1EC3m xu\u1EA5t hi\u1EC7n t\u1EEB',
+                    min(dt.plt$y),'-',max(dt.plt$y)) 
+  donvi        = as.character(dt.plt$dv[1])
+  fname =file.path(paste0(path,'/',dt.plt$parameter_id[1]),
+                   paste(dt.plt$station_id[1],'-',dt.plt$parameter_id[1],'-',
+                         dt.plt$type_id[1],'-',dt.plt$nhom_id[1],'-',
+                         min(dt.plt$y),'_',max(dt.plt$y),".png",sep=""))
+  # chart body
+  plt <- plot.flowrose(dt.plt,spd = 'spd',dir = 'dir',dv = donvi,tile = plt_titl,
+                        palette = "YlGnBu",pre = '')+ theme_bw() + facet_wrap(~bname)
+  plt <- plt + theme(legend.position = 'bottom',legend.spacing.x = unit(0.2, 'cm'),legend.key.size = unit(1.0, 'cm'),
+                       legend.text = element_text(size = legsize), legend.title = element_text(size = legsize))
+  plt <- plt + theme(plot.title = element_text(size = tilesize,hjust = 0.0),axis.title = element_text(size = axtilesize),
+                       axis.text = element_text(size = axisize),text = element_text(size = 20 ),strip.text = element_text(size = 20 ))
+  ## printing plt
+  ggsave(plt,filename = fname,width = 35, height = 15,dpi = 400, scale = 0.7)
+  return()
+}
+# Tạo list
+dt.plt4 = dt.plt4 %>% mutate(lst = paste(nhom_id,parameter_id,type_id))
+tmp_l = dt.plt4 %>% group_by(lst) %>% nest()
+# map function
+map(tmp_l$data,froseplot)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# plt5: Vẽ hoa gió đơn biến chỉ vẽ max hoặc min so sánh giữa các trạm và theo phân đoạn
+```{r}
+path = paste0(here::here(),"/figs/roseplot/plt5/",fsub_n(varl,'lagu'))
+# function
+froseplot = function(df = 'dt.plt'){
+  dt.plt = df
+  dt.plt$bname <- factor(dt.plt$pd, levels = c('pre99','2000-2010','post10'),
+                         labels = c(as.character(fsub_n(varl,'pre99')),
+                                    as.character(fsub_n(varl,'2000-2010')),as.character(fsub_n(varl,'post10'))))
+  dt.plt = left_join(dt.plt,stalist, by = c('station_id' = 'bien'))
+  # variables
+  plt_titl  = paste(fsub_n(parm,dt.plt$parameter_id[1]),
+                    tolower(fsub_n(varl,dt.plt$type_id[1])),
+                    '& th\u1EDDi \u0111i\u1EC3m xu\u1EA5t hi\u1EC7n t\u1EEB',
+                    min(dt.plt$y),'-',max(dt.plt$y)) 
+  donvi        = as.character(dt.plt$dv[1])
+  fname =file.path(paste0(path,'/',dt.plt$parameter_id[1]),
+                   paste(dt.plt$station_id[1],'-',dt.plt$parameter_id[1],'-',
+                         dt.plt$type_id[1],'-',dt.plt$nhom_id[1],'-',
+                         min(dt.plt$y),'_',max(dt.plt$y),'_phandoan',".png",sep=""))
+  # chart body
+  plt <- plot.flowrose(dt.plt,spd = 'spd',dir = 'dir',dv = donvi,tile = plt_titl,
+                        palette = "YlGnBu",pre = '')+ theme_bw() + facet_grid(bname.x~bname.y)
+  plt <- plt + theme(legend.position = 'bottom',legend.spacing.x = unit(0.2, 'cm'),legend.key.size = unit(1.0, 'cm'),
+                       legend.text = element_text(size = legsize), legend.title = element_text(size = legsize))
+  plt <- plt + theme(plot.title = element_text(size = tilesize,hjust = 0.0),axis.title = element_text(size = axtilesize),
+                       axis.text = element_text(size = axisize),text = element_text(size = 20 ),strip.text = element_text(size = 20 ))
+  ## printing plt
+  ggsave(plt,filename = fname,width = 25, height = 25,dpi = 400, scale = 0.7)
+  return()
+}
+# Tạo list
+dt.plt5 = dt.plt5 %>% mutate(lst = paste(nhom_id,parameter_id,type_id))
+tmp_l = dt.plt5 %>% group_by(lst) %>% nest()
+# map function
+map(tmp_l$data,froseplot)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
